@@ -59,7 +59,7 @@ func (r *ReportRepository) ListPeriods(ctx context.Context) ([]model.PeriodeBans
 func (r *ReportRepository) GetRanking(ctx context.Context, periodeID string, status string, limit int) ([]model.HasilSAWReport, error) {
   base := `
     SELECT
-      h.id, h.periode_id, h.warga_id,
+      w.no_kk, h.periode_id, h.warga_id,
       w.nama_lengkap, w.nik, w.rt, w.rw,
       h.nilai_vi, h.ranking, h.status
     FROM hasil_saw h

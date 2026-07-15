@@ -397,10 +397,11 @@ func recalculateSAW(ctx context.Context, db *pgxpool.Pool) error {
 	if err != nil {
 		return err
 	}
-	bobot := [13]float64{b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13}
+	bobotArr := [13]float64{b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13}
+	bobot := bobotArr[:]
 
 	rows, err := db.Query(ctx, `
-		SELECT id, nama_lengkap, c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value
+		SELECT id, no_kk, nama_lengkap, c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value
 		FROM warga
 		WHERE deleted_at IS NULL AND is_active = true AND foto_ktp_url IS NOT NULL AND foto_ktp_url <> '' AND foto_kk_url IS NOT NULL AND foto_kk_url <> ''
 	`)
@@ -413,11 +414,11 @@ func recalculateSAW(ctx context.Context, db *pgxpool.Pool) error {
 	for rows.Next() {
 		var a saw.Alternatif
 		var c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13 float64
-		err := rows.Scan(&a.ID, &a.Nama, &c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8, &c9, &c10, &c11, &c12, &c13)
+		err := rows.Scan(&a.ID, &a.NoKK, &a.Nama, &c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8, &c9, &c10, &c11, &c12, &c13)
 		if err != nil {
 			return err
 		}
-		a.Nilai = [13]float64{c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13}
+		a.Nilai = []float64{c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13}
 		alternatifs = append(alternatifs, a)
 	}
 
@@ -426,7 +427,7 @@ func recalculateSAW(ctx context.Context, db *pgxpool.Pool) error {
 		return err
 	}
 
-	isBenefit := [13]bool{true, true, false, false, true, false, false, false, false, false, true, false, false}
+	isBenefitArr := [13]bool{true, true, false, false, true, false, false, false, false, false, true, false, false}
 	kRows, err := db.Query(ctx, "SELECT code, type FROM kriteria WHERE is_active = TRUE")
 	if err == nil {
 		defer kRows.Close()
@@ -437,12 +438,13 @@ func recalculateSAW(ctx context.Context, db *pgxpool.Pool) error {
 				if _, err := fmt.Sscanf(code, "C%d", &index); err == nil {
 					index--
 					if index >= 0 && index < 13 {
-						isBenefit[index] = strings.ToLower(kType) == "benefit"
+						isBenefitArr[index] = strings.ToLower(kType) == "benefit"
 					}
 				}
 			}
 		}
 	}
+	isBenefit := isBenefitArr[:]
 
 	hasil := saw.HitungSAW(alternatifs, bobot, periodKuota, isBenefit)
 

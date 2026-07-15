@@ -23,10 +23,10 @@ type WargaFilter struct {
 }
 
 type WargaStats struct {
-	Total            int
-	ActiveCount      int
-	PendingCount     int
-	MissingDocsCount int
+	Total            int `json:"total"`
+	ActiveCount      int `json:"active_count"`
+	PendingCount     int `json:"pending_count"`
+	MissingDocsCount int `json:"missing_docs_count"`
 }
 
 type WargaRepository struct {

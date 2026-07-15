@@ -164,7 +164,7 @@ const SimulasiPage = () => {
             <thead className="text-xs text-text-secondary">
               <tr>
                 <th className="py-2 font-semibold">Warga</th>
-                <th className="py-2 font-semibold">ID</th>
+                <th className="py-2 font-semibold">No. KK</th>
                 <th className="py-2 font-semibold">Skor Vi</th>
                 <th className="py-2 font-semibold">Status</th>
               </tr>

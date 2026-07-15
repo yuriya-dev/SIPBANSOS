@@ -79,7 +79,7 @@ func (h *Handler) prepareSAWData(ctx context.Context, bobotID string) ([]saw.Alt
 
 	// 3. Fetch citizens and their dynamic values
 	rows, err := h.db.Query(ctx, `
-		SELECT id, nama_lengkap, kriteria_values
+		SELECT id, no_kk, nama_lengkap, kriteria_values
 		FROM warga
 		WHERE deleted_at IS NULL AND is_active = true AND foto_ktp_url IS NOT NULL AND foto_ktp_url <> '' AND foto_kk_url IS NOT NULL AND foto_kk_url <> ''
 	`)
@@ -92,7 +92,7 @@ func (h *Handler) prepareSAWData(ctx context.Context, bobotID string) ([]saw.Alt
 	for rows.Next() {
 		var a saw.Alternatif
 		var rawVals []byte
-		err := rows.Scan(&a.ID, &a.Nama, &rawVals)
+		err := rows.Scan(&a.ID, &a.NoKK, &a.Nama, &rawVals)
 		if err != nil {
 			return nil, nil, nil, fmt.Errorf("failed to scan warga: %w", err)
 		}

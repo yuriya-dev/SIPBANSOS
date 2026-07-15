@@ -6,12 +6,14 @@ import (
 
 type Alternatif struct {
 	ID    string
+	NoKK  string
 	Nama  string
 	Nilai []float64
 }
 
 type HasilSAW struct {
-	AlternatifID string  `json:"id"`
+	AlternatifID string  `json:"warga_id"`
+	ID           string  `json:"id"`
 	Nama         string  `json:"nama"`
 	Vi           float64 `json:"vi"`
 	Ranking      int     `json:"ranking"`
@@ -88,7 +90,12 @@ func HitungSAW(alternatifs []Alternatif, bobot []float64, kuota int, isBenefit [
 		for j := 0; j < numCriteria; j++ {
 			vi += bobot[j] * norm[i][j]
 		}
-		hasil[i] = HasilSAW{AlternatifID: alternatifs[i].ID, Nama: alternatifs[i].Nama, Vi: vi}
+		hasil[i] = HasilSAW{
+			AlternatifID: alternatifs[i].ID,
+			ID:           alternatifs[i].NoKK,
+			Nama:         alternatifs[i].Nama,
+			Vi:           vi,
+		}
 	}
 
 	sort.Slice(hasil, func(i, j int) bool { return hasil[i].Vi > hasil[j].Vi })
