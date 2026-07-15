@@ -7,7 +7,7 @@ import (
 type Alternatif struct {
 	ID    string
 	Nama  string
-	Nilai [13]float64
+	Nilai []float64
 }
 
 type HasilSAW struct {
@@ -18,21 +18,30 @@ type HasilSAW struct {
 	Status       string  `json:"status"`
 }
 
-func HitungSAW(alternatifs []Alternatif, bobot [13]float64, kuota int) []HasilSAW {
+func HitungSAW(alternatifs []Alternatif, bobot []float64, kuota int, isBenefit []bool) []HasilSAW {
 	m := len(alternatifs)
 	if m == 0 {
 		return nil
 	}
 
+	numCriteria := len(bobot)
+	if numCriteria == 0 {
+		return nil
+	}
+
 	// build column max/min
-	var maxv [13]float64
-	var minv [13]float64
-	for j := 0; j < 13; j++ {
+	maxv := make([]float64, numCriteria)
+	minv := make([]float64, numCriteria)
+	for j := 0; j < numCriteria; j++ {
 		maxv[j] = alternatifs[0].Nilai[j]
 		minv[j] = alternatifs[0].Nilai[j]
 	}
 	for i := 0; i < m; i++ {
-		for j := 0; j < 13; j++ {
+		for j := 0; j < numCriteria; j++ {
+			// safety check to prevent panic if array sizes differ
+			if j >= len(alternatifs[i].Nilai) {
+				continue
+			}
 			v := alternatifs[i].Nilai[j]
 			if v > maxv[j] {
 				maxv[j] = v
@@ -43,25 +52,31 @@ func HitungSAW(alternatifs []Alternatif, bobot [13]float64, kuota int) []HasilSA
 		}
 	}
 
-	// C1, C2, C5, C11 -> Benefit (true)
-	// C3, C4, C6, C7, C8, C9, C10, C12, C13 -> Cost (false)
-	isBenefit := [13]bool{true, true, false, false, true, false, false, false, false, false, true, false, false}
-	
 	// normalize
-	norm := make([][13]float64, m)
+	norm := make([][]float64, m)
 	for i := 0; i < m; i++ {
-		for j := 0; j < 13; j++ {
-			if isBenefit[j] {
+		norm[i] = make([]float64, numCriteria)
+		for j := 0; j < numCriteria; j++ {
+			var isBen bool
+			if j < len(isBenefit) {
+				isBen = isBenefit[j]
+			}
+			var val float64
+			if j < len(alternatifs[i].Nilai) {
+				val = alternatifs[i].Nilai[j]
+			}
+
+			if isBen {
 				if maxv[j] == 0 {
 					norm[i][j] = 0
 				} else {
-					norm[i][j] = alternatifs[i].Nilai[j] / maxv[j]
+					norm[i][j] = val / maxv[j]
 				}
 			} else {
-				if alternatifs[i].Nilai[j] == 0 {
+				if val == 0 {
 					norm[i][j] = 0
 				} else {
-					norm[i][j] = minv[j] / alternatifs[i].Nilai[j]
+					norm[i][j] = minv[j] / val
 				}
 			}
 		}
@@ -70,7 +85,7 @@ func HitungSAW(alternatifs []Alternatif, bobot [13]float64, kuota int) []HasilSA
 	hasil := make([]HasilSAW, m)
 	for i := 0; i < m; i++ {
 		var vi float64
-		for j := 0; j < 13; j++ {
+		for j := 0; j < numCriteria; j++ {
 			vi += bobot[j] * norm[i][j]
 		}
 		hasil[i] = HasilSAW{AlternatifID: alternatifs[i].ID, Nama: alternatifs[i].Nama, Vi: vi}

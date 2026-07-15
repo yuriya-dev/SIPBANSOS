@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -22,10 +23,10 @@ type WargaFilter struct {
 }
 
 type WargaStats struct {
-	Total            int `json:"total"`
-	ActiveCount      int `json:"active_count"`
-	PendingCount     int `json:"pending_count"`
-	MissingDocsCount int `json:"missing_docs_count"`
+	Total            int
+	ActiveCount      int
+	PendingCount     int
+	MissingDocsCount int
 }
 
 type WargaRepository struct {
@@ -61,7 +62,7 @@ func (r *WargaRepository) List(ctx context.Context, filter WargaFilter) ([]model
 		SELECT
 			id, nik, no_kk, nama_lengkap, tanggal_lahir, jenis_kelamin, alamat,
 			rt, rw, no_hp, foto_ktp_url, foto_kk_url,
-			c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value,
+			kriteria_values,
 			is_active, created_by, created_at, updated_at
 		FROM warga
 		WHERE deleted_at IS NULL
@@ -138,7 +139,7 @@ func (r *WargaRepository) GetByID(ctx context.Context, id string) (*model.Warga,
 		SELECT
 			id, nik, no_kk, nama_lengkap, tanggal_lahir, jenis_kelamin, alamat,
 			rt, rw, no_hp, foto_ktp_url, foto_kk_url,
-			c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value,
+			kriteria_values,
 			is_active, created_by, created_at, updated_at
 		FROM warga
 		WHERE id = $1 AND deleted_at IS NULL
@@ -160,22 +161,25 @@ func (r *WargaRepository) Create(ctx context.Context, w model.Warga) (*model.War
 		INSERT INTO warga (
 			nik, no_kk, nama_lengkap, tanggal_lahir, jenis_kelamin, alamat,
 			rt, rw, no_hp, foto_ktp_url, foto_kk_url,
-			c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value,
+			kriteria_values,
 			is_active, created_by
 		) VALUES (
 			$1, $2, $3, $4, $5, $6,
 			$7, $8, $9, $10, $11,
-			$12, $13, $14, $15, $16,
-			$17, $18, $19, $20, $21,
-			$22, $23, $24,
-			$25, $26
+			$12,
+			$13, $14
 		)
 		RETURNING
 			id, nik, no_kk, nama_lengkap, tanggal_lahir, jenis_kelamin, alamat,
 			rt, rw, no_hp, foto_ktp_url, foto_kk_url,
-			c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value,
+			kriteria_values,
 			is_active, created_by, created_at, updated_at
 	`
+
+	rawKriteria, _ := json.Marshal(w.KriteriaValues)
+	if rawKriteria == nil {
+		rawKriteria = []byte("{}")
+	}
 
 	item, err := scanWarga(r.db.QueryRow(ctx, q,
 		w.NIK,
@@ -189,19 +193,7 @@ func (r *WargaRepository) Create(ctx context.Context, w model.Warga) (*model.War
 		w.NoHP,
 		w.FotoKtpURL,
 		w.FotoKKURL,
-		w.C1Value,
-		w.C2Value,
-		w.C3Value,
-		w.C4Value,
-		w.C5Value,
-		w.C6Value,
-		w.C7Value,
-		w.C8Value,
-		w.C9Value,
-		w.C10Value,
-		w.C11Value,
-		w.C12Value,
-		w.C13Value,
+		rawKriteria,
 		w.IsActive,
 		w.CreatedBy,
 	).Scan)
@@ -226,27 +218,21 @@ func (r *WargaRepository) Update(ctx context.Context, id string, w model.Warga) 
 			no_hp = $9,
 			foto_ktp_url = $10,
 			foto_kk_url = $11,
-			c1_value = $12,
-			c2_value = $13,
-			c3_value = $14,
-			c4_value = $15,
-			c5_value = $16,
-			c6_value = $17,
-			c7_value = $18,
-			c8_value = $19,
-			c9_value = $20,
-			c10_value = $21,
-			c11_value = $22,
-			c12_value = $23,
-			c13_value = $24,
+			kriteria_values = $12,
+			is_active = $13,
 			updated_at = NOW()
-		WHERE id = $25 AND deleted_at IS NULL
+		WHERE id = $14 AND deleted_at IS NULL
 		RETURNING
 			id, nik, no_kk, nama_lengkap, tanggal_lahir, jenis_kelamin, alamat,
 			rt, rw, no_hp, foto_ktp_url, foto_kk_url,
-			c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value,
+			kriteria_values,
 			is_active, created_by, created_at, updated_at
 	`
+
+	rawKriteria, _ := json.Marshal(w.KriteriaValues)
+	if rawKriteria == nil {
+		rawKriteria = []byte("{}")
+	}
 
 	item, err := scanWarga(r.db.QueryRow(ctx, q,
 		w.NIK,
@@ -260,19 +246,8 @@ func (r *WargaRepository) Update(ctx context.Context, id string, w model.Warga) 
 		w.NoHP,
 		w.FotoKtpURL,
 		w.FotoKKURL,
-		w.C1Value,
-		w.C2Value,
-		w.C3Value,
-		w.C4Value,
-		w.C5Value,
-		w.C6Value,
-		w.C7Value,
-		w.C8Value,
-		w.C9Value,
-		w.C10Value,
-		w.C11Value,
-		w.C12Value,
-		w.C13Value,
+		rawKriteria,
+		w.IsActive,
 		id,
 	).Scan)
 	if err != nil {
@@ -299,6 +274,7 @@ func (r *WargaRepository) SoftDelete(ctx context.Context, id string) error {
 
 func scanWarga(scan func(dest ...interface{}) error) (model.Warga, error) {
 	var w model.Warga
+	var rawKriteria []byte
 	err := scan(
 		&w.ID,
 		&w.NIK,
@@ -312,19 +288,7 @@ func scanWarga(scan func(dest ...interface{}) error) (model.Warga, error) {
 		&w.NoHP,
 		&w.FotoKtpURL,
 		&w.FotoKKURL,
-		&w.C1Value,
-		&w.C2Value,
-		&w.C3Value,
-		&w.C4Value,
-		&w.C5Value,
-		&w.C6Value,
-		&w.C7Value,
-		&w.C8Value,
-		&w.C9Value,
-		&w.C10Value,
-		&w.C11Value,
-		&w.C12Value,
-		&w.C13Value,
+		&rawKriteria,
 		&w.IsActive,
 		&w.CreatedBy,
 		&w.CreatedAt,
@@ -332,6 +296,13 @@ func scanWarga(scan func(dest ...interface{}) error) (model.Warga, error) {
 	)
 	if err != nil {
 		return model.Warga{}, err
+	}
+
+	if len(rawKriteria) > 0 {
+		_ = json.Unmarshal(rawKriteria, &w.KriteriaValues)
+	}
+	if w.KriteriaValues == nil {
+		w.KriteriaValues = make(map[string]float64)
 	}
 
 	return w, nil

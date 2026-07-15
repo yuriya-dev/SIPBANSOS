@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"log"
 	"net/http"
@@ -44,6 +45,77 @@ func NewHandler(db *pgxpool.Pool, authManager *auth.Manager) *Handler {
 	}
 }
 
+func (h *Handler) prepareSAWData(ctx context.Context, bobotID string) ([]saw.Alternatif, []float64, []bool, error) {
+	// 1. Fetch active criteria
+	defs, err := h.getActiveKriteriaDefinitions(ctx)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load criteria definitions: %w", err)
+	}
+	if len(defs) == 0 {
+		return nil, nil, nil, errors.New("no active criteria configured")
+	}
+
+	// 2. Fetch weights for the selected version
+	var bobotValues map[string]float64
+	var rawBobot []byte
+	err = h.db.QueryRow(ctx, "SELECT bobot_values FROM bobot_kriteria WHERE id = $1", bobotID).Scan(&rawBobot)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load criteria weights: %w", err)
+	}
+	if len(rawBobot) > 0 {
+		_ = json.Unmarshal(rawBobot, &bobotValues)
+	}
+	if bobotValues == nil {
+		bobotValues = make(map[string]float64)
+	}
+
+	// Build bobot slice and isBenefit slice aligned with defs
+	bobots := make([]float64, len(defs))
+	isBenefit := make([]bool, len(defs))
+	for idx, def := range defs {
+		bobots[idx] = bobotValues[def.Code]
+		isBenefit[idx] = strings.ToLower(def.Type) == "benefit"
+	}
+
+	// 3. Fetch citizens and their dynamic values
+	rows, err := h.db.Query(ctx, `
+		SELECT id, nama_lengkap, kriteria_values
+		FROM warga
+		WHERE deleted_at IS NULL AND is_active = true AND foto_ktp_url IS NOT NULL AND foto_ktp_url <> '' AND foto_kk_url IS NOT NULL AND foto_kk_url <> ''
+	`)
+	if err != nil {
+		return nil, nil, nil, fmt.Errorf("failed to load warga: %w", err)
+	}
+	defer rows.Close()
+
+	var alternatifs []saw.Alternatif
+	for rows.Next() {
+		var a saw.Alternatif
+		var rawVals []byte
+		err := rows.Scan(&a.ID, &a.Nama, &rawVals)
+		if err != nil {
+			return nil, nil, nil, fmt.Errorf("failed to scan warga: %w", err)
+		}
+
+		var vals map[string]float64
+		if len(rawVals) > 0 {
+			_ = json.Unmarshal(rawVals, &vals)
+		}
+		if vals == nil {
+			vals = make(map[string]float64)
+		}
+
+		// Aligned values with defs
+		a.Nilai = make([]float64, len(defs))
+		for idx, def := range defs {
+			a.Nilai[idx] = vals[def.Code]
+		}
+		alternatifs = append(alternatifs, a)
+	}
+
+	return alternatifs, bobots, isBenefit, nil
+}
+
 type loginRequest struct {
 	Identifier string `json:"identifier" binding:"required"`
 	Password   string `json:"password" binding:"required"`
@@ -54,30 +126,47 @@ type refreshRequest struct {
 }
 
 type wargaRequest struct {
-	NIK                string `json:"nik" binding:"required"`
-	NoKK               string `json:"no_kk" binding:"required"`
-	NamaLengkap        string `json:"nama_lengkap" binding:"required"`
-	TanggalLahir       string `json:"tanggal_lahir" binding:"required"`
-	JenisKelamin       string `json:"jenis_kelamin" binding:"required"`
-	Alamat             string `json:"alamat" binding:"required"`
-	RT                 string `json:"rt"`
-	RW                 string `json:"rw"`
-	NoHP               string `json:"no_hp"`
-	FotoKtpURL         string `json:"foto_ktp_url"`
-	FotoKKURL          string `json:"foto_kk_url"`
-	C1Value            float64 `json:"c1_value"`
-	C2Value            float64 `json:"c2_value"`
-	C3Value            float64 `json:"c3_value"`
-	C4Value            float64 `json:"c4_value"`
-	C5Value            float64 `json:"c5_value"`
-	C6Value            float64 `json:"c6_value"`
-	C7Value            float64 `json:"c7_value"`
-	C8Value            float64 `json:"c8_value"`
-	C9Value            float64 `json:"c9_value"`
-	C10Value           float64 `json:"c10_value"`
-	C11Value           float64 `json:"c11_value"`
-	C12Value           float64 `json:"c12_value"`
-	C13Value           float64 `json:"c13_value"`
+	NIK            string             `json:"nik" binding:"required"`
+	NoKK           string             `json:"no_kk" binding:"required"`
+	NamaLengkap    string             `json:"nama_lengkap" binding:"required"`
+	TanggalLahir   string             `json:"tanggal_lahir" binding:"required"`
+	JenisKelamin   string             `json:"jenis_kelamin" binding:"required"`
+	Alamat         string             `json:"alamat" binding:"required"`
+	RT             string             `json:"rt"`
+	RW             string             `json:"rw"`
+	NoHP           string             `json:"no_hp"`
+	FotoKtpURL     string             `json:"foto_ktp_url"`
+	FotoKKURL      string             `json:"foto_kk_url"`
+	KriteriaValues map[string]float64 `json:"-"`
+}
+
+func (r *wargaRequest) UnmarshalJSON(data []byte) error {
+	type Alias wargaRequest
+	var aux Alias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*r = wargaRequest(aux)
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	r.KriteriaValues = make(map[string]float64)
+	for k, v := range raw {
+		if strings.HasSuffix(k, "_value") {
+			code := strings.ToUpper(strings.TrimSuffix(k, "_value"))
+			if valFloat, ok := v.(float64); ok {
+				r.KriteriaValues[code] = valFloat
+			} else if valStr, ok := v.(string); ok {
+				if f, err := strconv.ParseFloat(valStr, 64); err == nil {
+					r.KriteriaValues[code] = f
+				}
+			}
+		}
+	}
+	return nil
 }
 
 type sawRunRequest struct {
@@ -429,39 +518,10 @@ func (h *Handler) RunSAW(c *gin.Context) {
 		return
 	}
 
-	var b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13 float64
-	err = h.db.QueryRow(ctx, `
-		SELECT bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5, bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10, bobot_c11, bobot_c12, bobot_c13
-		FROM bobot_kriteria WHERE id = $1
-	`, resolvedBobotID).Scan(&b1, &b2, &b3, &b4, &b5, &b6, &b7, &b8, &b9, &b10, &b11, &b12, &b13)
+	alternatifs, bobot, isBenefit, err := h.prepareSAWData(ctx, resolvedBobotID)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memuat bobot kriteria untuk periode ini"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
-	}
-	bobot := [13]float64{b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13}
-
-	rows, err := h.db.Query(ctx, `
-		SELECT id, nama_lengkap, c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value
-		FROM warga
-		WHERE deleted_at IS NULL AND is_active = true AND foto_ktp_url IS NOT NULL AND foto_ktp_url <> '' AND foto_kk_url IS NOT NULL AND foto_kk_url <> ''
-	`)
-	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memuat data warga dari database: " + err.Error()})
-		return
-	}
-	defer rows.Close()
-
-	var alternatifs []saw.Alternatif
-	for rows.Next() {
-		var a saw.Alternatif
-		var c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13 float64
-		err := rows.Scan(&a.ID, &a.Nama, &c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8, &c9, &c10, &c11, &c12, &c13)
-		if err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal membaca data warga"})
-			return
-		}
-		a.Nilai = [13]float64{c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13}
-		alternatifs = append(alternatifs, a)
 	}
 
 	if len(alternatifs) == 0 {
@@ -469,7 +529,7 @@ func (h *Handler) RunSAW(c *gin.Context) {
 		return
 	}
 
-	hasil := saw.HitungSAW(alternatifs, bobot, resolvedKuota)
+	hasil := saw.HitungSAW(alternatifs, bobot, resolvedKuota, isBenefit)
 
 	tx, err := h.db.Begin(ctx)
 	if err != nil {
@@ -526,14 +586,10 @@ func validateWargaRequest(req wargaRequest) (time.Time, error) {
 	if req.JenisKelamin != "L" && req.JenisKelamin != "P" {
 		return time.Time{}, errors.New("jenis_kelamin harus L atau P")
 	}
-	if req.C1Value < 0 || req.C2Value < 0 {
-		return time.Time{}, errors.New("c1 dan c2 harus >= 0")
-	}
-	if !betweenFloat(req.C3Value, 1, 5) || !betweenFloat(req.C4Value, 1, 5) || !betweenFloat(req.C5Value, 1, 3) || !betweenFloat(req.C12Value, 1, 4) || !betweenFloat(req.C13Value, 1, 3) {
-		return time.Time{}, errors.New("nilai skala kategori tidak valid")
-	}
-	if req.C6Value < 0 || req.C7Value < 0 || req.C8Value < 0 || req.C9Value < 0 || req.C10Value < 0 || req.C11Value < 0 {
-		return time.Time{}, errors.New("nilai riil harus >= 0")
+	for _, val := range req.KriteriaValues {
+		if val < 0 {
+			return time.Time{}, errors.New("nilai kriteria tidak boleh negatif")
+		}
 	}
 
 	dob, err := time.Parse("2006-01-02", req.TanggalLahir)
@@ -566,31 +622,19 @@ func isDigits(value string) bool {
 
 func wargaToModel(req wargaRequest, dob time.Time, createdBy string) model.Warga {
 	return model.Warga{
-		NIK:                req.NIK,
-		NoKK:               req.NoKK,
-		NamaLengkap:        req.NamaLengkap,
-		TanggalLahir:       dob,
-		JenisKelamin:       req.JenisKelamin,
-		Alamat:             req.Alamat,
-		RT:                 stringPointer(req.RT),
-		RW:                 stringPointer(req.RW),
-		NoHP:               stringPointer(req.NoHP),
-		FotoKtpURL:         stringPointer(req.FotoKtpURL),
-		FotoKKURL:          stringPointer(req.FotoKKURL),
-		C1Value:            req.C1Value,
-		C2Value:            req.C2Value,
-		C3Value:            req.C3Value,
-		C4Value:            req.C4Value,
-		C5Value:            req.C5Value,
-		C6Value:            req.C6Value,
-		C7Value:            req.C7Value,
-		C8Value:            req.C8Value,
-		C9Value:            req.C9Value,
-		C10Value:           req.C10Value,
-		C11Value:           req.C11Value,
-		C12Value:           req.C12Value,
-		C13Value:           req.C13Value,
-		CreatedBy:          stringPointer(createdBy),
+		NIK:            req.NIK,
+		NoKK:           req.NoKK,
+		NamaLengkap:    req.NamaLengkap,
+		TanggalLahir:   dob,
+		JenisKelamin:   req.JenisKelamin,
+		Alamat:         req.Alamat,
+		RT:             stringPointer(req.RT),
+		RW:             stringPointer(req.RW),
+		NoHP:           stringPointer(req.NoHP),
+		FotoKtpURL:     stringPointer(req.FotoKtpURL),
+		FotoKKURL:      stringPointer(req.FotoKKURL),
+		CreatedBy:      stringPointer(createdBy),
+		KriteriaValues: req.KriteriaValues,
 	}
 }
 
@@ -669,36 +713,9 @@ func (h *Handler) RecalculateSAWForActivePeriod(ctx context.Context) error {
 		return errors.New("active period is missing bobot_id configuration")
 	}
 
-	var b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13 float64
-	err = h.db.QueryRow(ctx, `
-		SELECT bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5, bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10, bobot_c11, bobot_c12, bobot_c13
-		FROM bobot_kriteria WHERE id = $1
-	`, bobotID).Scan(&b1, &b2, &b3, &b4, &b5, &b6, &b7, &b8, &b9, &b10, &b11, &b12, &b13)
+	alternatifs, bobot, isBenefit, err := h.prepareSAWData(ctx, bobotID)
 	if err != nil {
 		return err
-	}
-	bobot := [13]float64{b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13}
-
-	rows, err := h.db.Query(ctx, `
-		SELECT id, nama_lengkap, c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value
-		FROM warga
-		WHERE deleted_at IS NULL AND is_active = true AND foto_ktp_url IS NOT NULL AND foto_ktp_url <> '' AND foto_kk_url IS NOT NULL AND foto_kk_url <> ''
-	`)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-
-	var alternatifs []saw.Alternatif
-	for rows.Next() {
-		var a saw.Alternatif
-		var c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13 float64
-		err := rows.Scan(&a.ID, &a.Nama, &c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8, &c9, &c10, &c11, &c12, &c13)
-		if err != nil {
-			return err
-		}
-		a.Nilai = [13]float64{c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13}
-		alternatifs = append(alternatifs, a)
 	}
 
 	if len(alternatifs) == 0 {
@@ -707,7 +724,7 @@ func (h *Handler) RecalculateSAWForActivePeriod(ctx context.Context) error {
 		return err
 	}
 
-	hasil := saw.HitungSAW(alternatifs, bobot, periodKuota)
+	hasil := saw.HitungSAW(alternatifs, bobot, periodKuota, isBenefit)
 
 	tx, err := h.db.Begin(ctx)
 	if err != nil {

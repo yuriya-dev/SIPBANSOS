@@ -11,7 +11,16 @@ import Drawer from "../../components/ui/Drawer";
 const typeVariant = (type) => (type?.toLowerCase() === "benefit" ? "success" : "danger");
 
 const KriteriaPage = () => {
-  const { getKriteria, getKriteriaById, updateKriteria, createKriteria, getKriteriaVersions } = useApi();
+  const {
+    getKriteria,
+    getKriteriaById,
+    updateKriteria,
+    createKriteria,
+    getKriteriaVersions,
+    createKriteriaDefinition,
+    updateKriteriaDefinition,
+    deleteKriteriaDefinition
+  } = useApi();
   
   // Data states
   const [versions, setVersions] = useState([]);
@@ -31,6 +40,16 @@ const KriteriaPage = () => {
     keterangan: "",
     is_active: false,
     weights: {}
+  });
+
+  // Definition Drawer states
+  const [isDefDrawerOpen, setIsDefDrawerOpen] = useState(false);
+  const [isDefListDrawerOpen, setIsDefListDrawerOpen] = useState(false);
+  const [defDrawerMode, setDefDrawerMode] = useState("create"); // "create" | "edit"
+  const [defForm, setDefForm] = useState({
+    code: "",
+    name: "",
+    type: "Benefit"
   });
 
   const fetchVersions = async (selectId = null) => {
@@ -209,6 +228,100 @@ const KriteriaPage = () => {
     }
   };
 
+  const openCreateDefinitionModal = () => {
+    setDefDrawerMode("create");
+    setDefForm({
+      code: "",
+      name: "",
+      type: "Benefit"
+    });
+    setIsDefListDrawerOpen(false);
+    setIsDefDrawerOpen(true);
+  };
+
+  const openEditDefinitionModal = (item) => {
+    setDefDrawerMode("edit");
+    setDefForm({
+      code: item.code,
+      name: item.name,
+      type: item.type
+    });
+    setIsDefListDrawerOpen(false);
+    setIsDefDrawerOpen(true);
+  };
+
+  const handleDefSave = async (e) => {
+    e.preventDefault();
+    if (!defForm.name.trim()) {
+      toast.error("Nama kriteria wajib diisi.");
+      return;
+    }
+
+    setIsSaving(true);
+    let res;
+    if (defDrawerMode === "edit") {
+      res = await updateKriteriaDefinition(defForm.code, {
+        name: defForm.name,
+        type: defForm.type
+      });
+    } else {
+      res = await createKriteriaDefinition({
+        name: defForm.name,
+        type: defForm.type
+      });
+    }
+
+    setIsSaving(false);
+    if (res.success) {
+      toast.success(
+        defDrawerMode === "edit"
+          ? "Kriteria berhasil diperbarui!"
+          : "Kriteria baru berhasil ditambahkan!"
+      );
+      setIsDefDrawerOpen(false);
+      setIsDefListDrawerOpen(true);
+      if (selectedVersionId) {
+        const fetchDetails = async () => {
+          setIsLoading(true);
+          const detailRes = await getKriteriaById(selectedVersionId);
+          if (detailRes.success) {
+            setCriteria(detailRes.data);
+            setVersionData(detailRes.version);
+          }
+          setIsLoading(false);
+        };
+        fetchDetails();
+      }
+    } else {
+      toast.error(res.message || "Gagal menyimpan kriteria.");
+    }
+  };
+
+  const handleDeleteDefinition = async (item) => {
+    if (window.confirm(`Apakah Anda yakin ingin menghapus kriteria ${item.code} (${item.name})?`)) {
+      setIsSaving(true);
+      const res = await deleteKriteriaDefinition(item.code);
+      setIsSaving(false);
+      if (res.success) {
+        toast.success(`Kriteria ${item.code} berhasil dihapus!`);
+        if (selectedVersionId) {
+          const fetchDetails = async () => {
+            setIsLoading(true);
+            const detailRes = await getKriteriaById(selectedVersionId);
+            if (detailRes.success) {
+              setCriteria(detailRes.data);
+              setVersionData(detailRes.version);
+            }
+            setIsLoading(false);
+          };
+          fetchDetails();
+        }
+      } else {
+        toast.error(res.message || "Gagal menghapus kriteria.");
+      }
+    }
+  };
+
   return (
     <AppShell title="Kriteria & Bobot" subtitle="Atur bobot 13 kriteria dan versi per periode." showRightPanel={false}>
       {/* Version Selector Header Card */}
@@ -241,6 +354,9 @@ const KriteriaPage = () => {
           )}
           <Button variant="outline" onClick={openEditDrawer} disabled={!versionData}>
             Ubah Detail/Bobot
+          </Button>
+          <Button variant="outline" onClick={() => setIsDefListDrawerOpen(true)} className="border-primary-orange text-primary-orange hover:bg-primary-orange/5">
+            Kelola Kriteria
           </Button>
           <Button onClick={openCreateDrawer}>
             Tambah Versi Baru
@@ -430,6 +546,127 @@ const KriteriaPage = () => {
             </Button>
           </div>
         </form>
+      </Drawer>
+
+      {/* Slide-over Drawer for Criteria Definitions */}
+      <Drawer
+        open={isDefDrawerOpen}
+        onClose={() => {
+          setIsDefDrawerOpen(false);
+          setIsDefListDrawerOpen(true);
+        }}
+        title={defDrawerMode === "create" ? "Tambah Kriteria Baru" : "Ubah Detail Kriteria"}
+        subtitle={
+          defDrawerMode === "create"
+            ? "Masukkan nama kriteria baru dan tipenya (Benefit/Cost)."
+            : `Mengubah detail untuk kriteria ${defForm.code}`
+        }
+      >
+        <form onSubmit={handleDefSave} className="flex flex-col gap-4 pb-12">
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-text-secondary">Nama Kriteria</label>
+            <input
+              type="text"
+              placeholder="Contoh: Pendapatan Bulanan"
+              className="w-full rounded-xl border border-border px-3 py-2 text-sm outline-none focus:border-primary-orange"
+              value={defForm.name}
+              onChange={(e) => setDefForm(prev => ({ ...prev, name: e.target.value }))}
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <label className="text-xs font-semibold text-text-secondary block">Tipe Kriteria</label>
+            <select
+              className="w-full rounded-xl border border-border px-3 py-2 text-sm outline-none focus:border-primary-orange bg-white"
+              value={defForm.type}
+              onChange={(e) => setDefForm(prev => ({ ...prev, type: e.target.value }))}
+            >
+              <option value="Benefit">Benefit (Semakin tinggi semakin baik)</option>
+              <option value="Cost">Cost (Semakin rendah semakin baik)</option>
+            </select>
+          </div>
+
+          <div className="mt-4 flex gap-2">
+            <Button
+              type="submit"
+              className="flex-1"
+              disabled={isSaving || !defForm.name.trim()}
+            >
+              {isSaving ? "Menyimpan..." : "Simpan Kriteria"}
+            </Button>
+            <Button
+              type="button"
+              variant="outline"
+              onClick={() => {
+                setIsDefDrawerOpen(false);
+                setIsDefListDrawerOpen(true);
+              }}
+              disabled={isSaving}
+            >
+              Batal
+            </Button>
+          </div>
+        </form>
+      </Drawer>
+
+      {/* Slide-over Drawer for Managing Criteria List */}
+      <Drawer
+        open={isDefListDrawerOpen}
+        onClose={() => setIsDefListDrawerOpen(false)}
+        title="Kelola Daftar Kriteria"
+        subtitle="Kelola kriteria-kriteria penilaian bansos yang aktif."
+      >
+        <div className="space-y-4 pb-12">
+          <div className="flex justify-end">
+            <Button
+              type="button"
+              variant="outline"
+              className="border-primary-orange text-primary-orange hover:bg-primary-orange/5 text-xs py-1.5 px-3"
+              onClick={() => {
+                openCreateDefinitionModal();
+              }}
+            >
+              + Tambah Kriteria Baru
+            </Button>
+          </div>
+
+          <div className="divide-y divide-border/60">
+            {criteria.map((item) => (
+              <div key={item.code} className="py-3 flex items-center justify-between gap-3">
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-bold text-sm text-text-primary">{item.code}</span>
+                    <Badge variant={typeVariant(item.type)} className="text-[10px] px-1.5 py-0.2">{item.type}</Badge>
+                  </div>
+                  <p className="text-sm text-text-secondary mt-1 truncate">{item.name}</p>
+                </div>
+                <div className="flex gap-2 shrink-0">
+                  <button
+                    type="button"
+                    className="text-xs text-primary-orange hover:text-primary-orange-hover font-semibold px-2.5 py-1 border border-border hover:border-primary-orange/30 rounded transition"
+                    onClick={() => {
+                      openEditDefinitionModal(item);
+                    }}
+                  >
+                    Edit
+                  </button>
+                  <button
+                    type="button"
+                    className="text-xs text-accent-red hover:text-red-700 font-semibold px-2.5 py-1 border border-border hover:border-accent-red/30 rounded transition"
+                    onClick={() => {
+                      handleDeleteDefinition(item);
+                    }}
+                  >
+                    Hapus
+                  </button>
+                </div>
+              </div>
+            ))}
+            {criteria.length === 0 && (
+              <p className="text-center text-sm text-text-secondary py-6">Belum ada kriteria.</p>
+            )}
+          </div>
+        </div>
       </Drawer>
     </AppShell>
   );

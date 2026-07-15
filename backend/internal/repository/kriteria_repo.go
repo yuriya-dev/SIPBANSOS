@@ -2,6 +2,7 @@ package repository
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 
 	"github.com/jackc/pgx/v5"
@@ -24,9 +25,7 @@ func (r *KriteriaRepository) GetActiveOrLatest(ctx context.Context) (*model.Krit
   const activeQuery = `
     SELECT
       id, versi, keterangan,
-      bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5,
-      bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10,
-      bobot_c11, bobot_c12, bobot_c13,
+      bobot_values,
       is_active, dibuat_oleh, created_at
     FROM bobot_kriteria
     WHERE is_active = TRUE
@@ -46,9 +45,7 @@ func (r *KriteriaRepository) GetActiveOrLatest(ctx context.Context) (*model.Krit
   const latestQuery = `
     SELECT
       id, versi, keterangan,
-      bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5,
-      bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10,
-      bobot_c11, bobot_c12, bobot_c13,
+      bobot_values,
       is_active, dibuat_oleh, created_at
     FROM bobot_kriteria
     ORDER BY created_at DESC
@@ -70,9 +67,7 @@ func (r *KriteriaRepository) GetByID(ctx context.Context, id string) (*model.Kri
   const q = `
     SELECT
       id, versi, keterangan,
-      bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5,
-      bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10,
-      bobot_c11, bobot_c12, bobot_c13,
+      bobot_values,
       is_active, dibuat_oleh, created_at
     FROM bobot_kriteria
     WHERE id = $1
@@ -94,37 +89,26 @@ func (r *KriteriaRepository) Create(ctx context.Context, data model.KriteriaBobo
   const q = `
     INSERT INTO bobot_kriteria (
       versi, keterangan,
-      bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5,
-      bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10,
-      bobot_c11, bobot_c12, bobot_c13,
+      bobot_values,
       is_active, dibuat_oleh
     ) VALUES (
-      $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17
+      $1, $2, $3, $4, $5
     )
     RETURNING
       id, versi, keterangan,
-      bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5,
-      bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10,
-      bobot_c11, bobot_c12, bobot_c13,
+      bobot_values,
       is_active, dibuat_oleh, created_at
   `
+
+  rawBobot, _ := json.Marshal(data.BobotValues)
+  if rawBobot == nil {
+    rawBobot = []byte("{}")
+  }
 
   item, err := scanKriteria(r.db.QueryRow(ctx, q,
     data.Versi,
     data.Keterangan,
-    data.BobotC1,
-    data.BobotC2,
-    data.BobotC3,
-    data.BobotC4,
-    data.BobotC5,
-    data.BobotC6,
-    data.BobotC7,
-    data.BobotC8,
-    data.BobotC9,
-    data.BobotC10,
-    data.BobotC11,
-    data.BobotC12,
-    data.BobotC13,
+    rawBobot,
     data.IsActive,
     data.DibuatOleh,
   ).Scan)
@@ -157,45 +141,24 @@ func (r *KriteriaRepository) Update(ctx context.Context, id string, data model.K
     UPDATE bobot_kriteria SET
       versi = $1,
       keterangan = $2,
-      bobot_c1 = $3,
-      bobot_c2 = $4,
-      bobot_c3 = $5,
-      bobot_c4 = $6,
-      bobot_c5 = $7,
-      bobot_c6 = $8,
-      bobot_c7 = $9,
-      bobot_c8 = $10,
-      bobot_c9 = $11,
-      bobot_c10 = $12,
-      bobot_c11 = $13,
-      bobot_c12 = $14,
-      bobot_c13 = $15,
-      is_active = $16
-    WHERE id = $17
+      bobot_values = $3,
+      is_active = $4
+    WHERE id = $5
     RETURNING
       id, versi, keterangan,
-      bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5,
-      bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10,
-      bobot_c11, bobot_c12, bobot_c13,
+      bobot_values,
       is_active, dibuat_oleh, created_at
   `
+
+  rawBobot, _ := json.Marshal(data.BobotValues)
+  if rawBobot == nil {
+    rawBobot = []byte("{}")
+  }
 
   item, err := scanKriteria(tx.QueryRow(ctx, q,
     data.Versi,
     data.Keterangan,
-    data.BobotC1,
-    data.BobotC2,
-    data.BobotC3,
-    data.BobotC4,
-    data.BobotC5,
-    data.BobotC6,
-    data.BobotC7,
-    data.BobotC8,
-    data.BobotC9,
-    data.BobotC10,
-    data.BobotC11,
-    data.BobotC12,
-    data.BobotC13,
+    rawBobot,
     data.IsActive,
     id,
   ).Scan)
@@ -215,29 +178,25 @@ func (r *KriteriaRepository) Update(ctx context.Context, id string, data model.K
 
 func scanKriteria(scan func(dest ...interface{}) error) (model.KriteriaBobot, error) {
   var item model.KriteriaBobot
+  var rawBobot []byte
   err := scan(
     &item.ID,
     &item.Versi,
     &item.Keterangan,
-    &item.BobotC1,
-    &item.BobotC2,
-    &item.BobotC3,
-    &item.BobotC4,
-    &item.BobotC5,
-    &item.BobotC6,
-    &item.BobotC7,
-    &item.BobotC8,
-    &item.BobotC9,
-    &item.BobotC10,
-    &item.BobotC11,
-    &item.BobotC12,
-    &item.BobotC13,
+    &rawBobot,
     &item.IsActive,
     &item.DibuatOleh,
     &item.CreatedAt,
   )
   if err != nil {
     return model.KriteriaBobot{}, err
+  }
+
+  if len(rawBobot) > 0 {
+    _ = json.Unmarshal(rawBobot, &item.BobotValues)
+  }
+  if item.BobotValues == nil {
+    item.BobotValues = make(map[string]float64)
   }
 
   return item, nil

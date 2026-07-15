@@ -370,6 +370,17 @@ func (h *Handler) GetWeeklyActivity(c *gin.Context) {
 	}
 	defer rows.Close()
 
+	queryMap := make(map[string]int)
+	for rows.Next() {
+		var label string
+		var val int
+		if err := rows.Scan(&label, &val); err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan activity"})
+			return
+		}
+		queryMap[label] = val
+	}
+
 	dayMapping := map[string]string{
 		"Mon": "Sen",
 		"Tue": "Sel",
@@ -386,31 +397,19 @@ func (h *Handler) GetWeeklyActivity(c *gin.Context) {
 	}
 
 	var list []activityItem
-	for rows.Next() {
-		var label string
-		var val int
-		if err := rows.Scan(&label, &val); err != nil {
-			c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to scan activity"})
-			return
-		}
-
-		indLabel, exists := dayMapping[label]
+	now := time.Now()
+	for i := 6; i >= 0; i-- {
+		d := now.AddDate(0, 0, -i)
+		engLabel := d.Format("Mon")
+		indLabel, exists := dayMapping[engLabel]
 		if !exists {
-			indLabel = label
+			indLabel = engLabel
 		}
-
+		val := queryMap[engLabel]
 		list = append(list, activityItem{
 			Label: indLabel,
 			Value: val,
 		})
-	}
-
-	// Fallback to empty week if no logs exist
-	if len(list) == 0 {
-		weekdays := []string{"Sen", "Sel", "Rab", "Kam", "Jum", "Sab", "Min"}
-		for _, w := range weekdays {
-			list = append(list, activityItem{Label: w, Value: 0})
-		}
 	}
 
 	c.JSON(http.StatusOK, gin.H{"data": list})
@@ -492,38 +491,9 @@ func (h *Handler) ensureSAWCalculated(ctx context.Context, periodID string) erro
 		}
 	}
 
-	// 3. Load criteria weights
-	var b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13 float64
-	err = h.db.QueryRow(ctx, `
-		SELECT bobot_c1, bobot_c2, bobot_c3, bobot_c4, bobot_c5, bobot_c6, bobot_c7, bobot_c8, bobot_c9, bobot_c10, bobot_c11, bobot_c12, bobot_c13
-		FROM bobot_kriteria WHERE id = $1
-	`, bobotID).Scan(&b1, &b2, &b3, &b4, &b5, &b6, &b7, &b8, &b9, &b10, &b11, &b12, &b13)
+	alternatifs, bobotSlice, isBenefit, err := h.prepareSAWData(ctx, bobotID)
 	if err != nil {
-		return fmt.Errorf("failed to load bobot kriteria: %w", err)
-	}
-	bobot := [13]float64{b1, b2, b3, b4, b5, b6, b7, b8, b9, b10, b11, b12, b13}
-
-	// 4. Load active warga with KTP and KK
-	rows, err := h.db.Query(ctx, `
-		SELECT id, nama_lengkap, c1_value, c2_value, c3_value, c4_value, c5_value, c6_value, c7_value, c8_value, c9_value, c10_value, c11_value, c12_value, c13_value
-		FROM warga
-		WHERE deleted_at IS NULL AND is_active = true AND foto_ktp_url IS NOT NULL AND foto_ktp_url <> '' AND foto_kk_url IS NOT NULL AND foto_kk_url <> ''
-	`)
-	if err != nil {
-		return fmt.Errorf("failed to load warga: %w", err)
-	}
-	defer rows.Close()
-
-	var alternatifs []saw.Alternatif
-	for rows.Next() {
-		var a saw.Alternatif
-		var c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13 float64
-		err := rows.Scan(&a.ID, &a.Nama, &c1, &c2, &c3, &c4, &c5, &c6, &c7, &c8, &c9, &c10, &c11, &c12, &c13)
-		if err != nil {
-			return fmt.Errorf("failed to scan warga: %w", err)
-		}
-		a.Nilai = [13]float64{c1, c2, c3, c4, c5, c6, c7, c8, c9, c10, c11, c12, c13}
-		alternatifs = append(alternatifs, a)
+		return err
 	}
 
 	if len(alternatifs) == 0 {
@@ -531,7 +501,7 @@ func (h *Handler) ensureSAWCalculated(ctx context.Context, periodID string) erro
 	}
 
 	// 5. Calculate SAW
-	hasil := saw.HitungSAW(alternatifs, bobot, resolvedKuota)
+	hasil := saw.HitungSAW(alternatifs, bobotSlice, resolvedKuota, isBenefit)
 
 	// 6. Save results
 	tx, err := h.db.Begin(ctx)

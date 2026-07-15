@@ -134,19 +134,21 @@ func (h *Handler) ValidateImport(c *gin.Context) {
 			continue
 		}
 
-		req.C1Value = c1
-		req.C2Value = c2
-		req.C3Value = c3
-		req.C4Value = c4
-		req.C5Value = c5
-		req.C6Value = c6
-		req.C7Value = c7
-		req.C8Value = c8
-		req.C9Value = c9
-		req.C10Value = c10
-		req.C11Value = c11
-		req.C12Value = c12
-		req.C13Value = c13
+		req.KriteriaValues = map[string]float64{
+			"C1":  c1,
+			"C2":  c2,
+			"C3":  c3,
+			"C4":  c4,
+			"C5":  c5,
+			"C6":  c6,
+			"C7":  c7,
+			"C8":  c8,
+			"C9":  c9,
+			"C10": c10,
+			"C11": c11,
+			"C12": c12,
+			"C13": c13,
+		}
 
 		_, err = validateWargaRequest(req)
 		if err != nil {

@@ -2,6 +2,7 @@ package model
 
 import (
 	"encoding/json"
+	"strings"
 	"time"
 )
 
@@ -16,35 +17,43 @@ type User struct {
 }
 
 type Warga struct {
-	ID                 string    `json:"id"`
-	NIK                string    `json:"nik"`
-	NoKK               string    `json:"no_kk"`
-	NamaLengkap        string    `json:"nama_lengkap"`
-	TanggalLahir       time.Time `json:"tanggal_lahir"`
-	JenisKelamin       string    `json:"jenis_kelamin"`
-	Alamat             string    `json:"alamat"`
-	RT                 *string   `json:"rt,omitempty"`
-	RW                 *string   `json:"rw,omitempty"`
-	NoHP               *string   `json:"no_hp,omitempty"`
-	FotoKtpURL         *string   `json:"foto_ktp_url,omitempty"`
-	FotoKKURL          *string   `json:"foto_kk_url,omitempty"`
-	C1Value            float64   `json:"c1_value"`
-	C2Value            float64   `json:"c2_value"`
-	C3Value            float64   `json:"c3_value"`
-	C4Value            float64   `json:"c4_value"`
-	C5Value            float64   `json:"c5_value"`
-	C6Value            float64   `json:"c6_value"`
-	C7Value            float64   `json:"c7_value"`
-	C8Value            float64   `json:"c8_value"`
-	C9Value            float64   `json:"c9_value"`
-	C10Value           float64   `json:"c10_value"`
-	C11Value           float64   `json:"c11_value"`
-	C12Value           float64   `json:"c12_value"`
-	C13Value           float64   `json:"c13_value"`
-	IsActive           bool      `json:"is_active"`
-	CreatedBy          *string   `json:"created_by,omitempty"`
-	CreatedAt          time.Time `json:"created_at"`
-	UpdatedAt          time.Time `json:"updated_at"`
+	ID                 string             `json:"id"`
+	NIK                string             `json:"nik"`
+	NoKK               string             `json:"no_kk"`
+	NamaLengkap        string             `json:"nama_lengkap"`
+	TanggalLahir       time.Time          `json:"tanggal_lahir"`
+	JenisKelamin       string             `json:"jenis_kelamin"`
+	Alamat             string             `json:"alamat"`
+	RT                 *string            `json:"rt,omitempty"`
+	RW                 *string            `json:"rw,omitempty"`
+	NoHP               *string            `json:"no_hp,omitempty"`
+	FotoKtpURL         *string            `json:"foto_ktp_url,omitempty"`
+	FotoKKURL          *string            `json:"foto_kk_url,omitempty"`
+	IsActive           bool               `json:"is_active"`
+	CreatedBy          *string            `json:"created_by,omitempty"`
+	CreatedAt          time.Time          `json:"created_at"`
+	UpdatedAt          time.Time          `json:"updated_at"`
+	KriteriaValues     map[string]float64 `json:"-"`
+}
+
+func (w Warga) MarshalJSON() ([]byte, error) {
+	type Alias Warga
+	b, err := json.Marshal((*Alias)(&w))
+	if err != nil {
+		return nil, err
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+
+	for k, v := range w.KriteriaValues {
+		key := strings.ToLower(k) + "_value"
+		m[key] = v
+	}
+
+	return json.Marshal(m)
 }
 
 type AuditLog struct {
@@ -62,25 +71,33 @@ type AuditLog struct {
 }
 
 type KriteriaBobot struct {
-	ID         string    `json:"id"`
-	Versi      string    `json:"versi"`
-	Keterangan *string   `json:"keterangan,omitempty"`
-	BobotC1    float64   `json:"bobot_c1"`
-	BobotC2    float64   `json:"bobot_c2"`
-	BobotC3    float64   `json:"bobot_c3"`
-	BobotC4    float64   `json:"bobot_c4"`
-	BobotC5    float64   `json:"bobot_c5"`
-	BobotC6    float64   `json:"bobot_c6"`
-	BobotC7    float64   `json:"bobot_c7"`
-	BobotC8    float64   `json:"bobot_c8"`
-	BobotC9    float64   `json:"bobot_c9"`
-	BobotC10   float64   `json:"bobot_c10"`
-	BobotC11   float64   `json:"bobot_c11"`
-	BobotC12   float64   `json:"bobot_c12"`
-	BobotC13   float64   `json:"bobot_c13"`
-	IsActive   bool      `json:"is_active"`
-	DibuatOleh *string   `json:"dibuat_oleh,omitempty"`
-	CreatedAt  time.Time `json:"created_at"`
+	ID          string             `json:"id"`
+	Versi       string             `json:"versi"`
+	Keterangan  *string            `json:"keterangan,omitempty"`
+	IsActive    bool               `json:"is_active"`
+	DibuatOleh  *string            `json:"dibuat_oleh,omitempty"`
+	CreatedAt   time.Time          `json:"created_at"`
+	BobotValues map[string]float64 `json:"-"`
+}
+
+func (kb KriteriaBobot) MarshalJSON() ([]byte, error) {
+	type Alias KriteriaBobot
+	b, err := json.Marshal((*Alias)(&kb))
+	if err != nil {
+		return nil, err
+	}
+
+	var m map[string]interface{}
+	if err := json.Unmarshal(b, &m); err != nil {
+		return nil, err
+	}
+
+	for k, v := range kb.BobotValues {
+		key := "bobot_" + strings.ToLower(k)
+		m[key] = v
+	}
+
+	return json.Marshal(m)
 }
 
 type PeriodeBansos struct {

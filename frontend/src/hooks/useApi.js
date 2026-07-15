@@ -306,6 +306,45 @@ export const useApi = () => {
     return { success: true, data: payload?.data };
   }, [request]);
 
+  const createKriteriaDefinition = useCallback(async (data) => {
+    const response = await request("/api/v1/kriteria/definitions", {
+      method: "POST",
+      body: JSON.stringify(data)
+    });
+    const payload = await parseJson(response);
+
+    if (!response.ok) {
+      return { success: false, message: payload?.error || "Gagal membuat kriteria baru." };
+    }
+    return { success: true, message: payload?.message, code: payload?.code };
+  }, [request]);
+
+  const updateKriteriaDefinition = useCallback(async (id, data) => {
+    const response = await request(`/api/v1/kriteria/definitions/${id}`, {
+      method: "PUT",
+      body: JSON.stringify(data)
+    });
+    const payload = await parseJson(response);
+
+    if (!response.ok) {
+      return { success: false, message: payload?.error || "Gagal mengubah kriteria." };
+    }
+    return { success: true, message: payload?.message, code: payload?.code };
+  }, [request]);
+
+  const deleteKriteriaDefinition = useCallback(async (id) => {
+    const response = await request(`/api/v1/kriteria/definitions/${id}`, {
+      method: "DELETE"
+    });
+    const payload = await parseJson(response);
+
+    if (!response.ok) {
+      return { success: false, message: payload?.error || "Gagal menghapus kriteria." };
+    }
+    return { success: true, message: payload?.message, code: payload?.code };
+  }, [request]);
+
+
   const createWarga = useCallback(async (data) => {
     const response = await request("/api/v1/warga", {
       method: "POST",
@@ -700,6 +739,9 @@ export const useApi = () => {
     getKriteriaById,
     createKriteria,
     updateKriteria,
+    createKriteriaDefinition,
+    updateKriteriaDefinition,
+    deleteKriteriaDefinition,
     getPeriods,
     getSettings,
     updateSettings,

@@ -30,6 +30,9 @@ func RegisterRoutes(r *gin.Engine, h *handler.Handler, authMiddleware gin.Handle
 				kriteriaGroup.GET("/:id", h.GetKriteriaByID)
 				kriteriaGroup.POST("", h.CreateKriteria)
 				kriteriaGroup.PUT("/:id", h.UpdateKriteria)
+				kriteriaGroup.POST("/definitions", h.CreateKriteriaDefinition)
+				kriteriaGroup.PUT("/definitions/:id", h.UpdateKriteriaDefinition)
+				kriteriaGroup.DELETE("/definitions/:id", h.DeleteKriteriaDefinition)
 			}
 
 			importGroup := protected.Group("/import", middleware.RequireRoles("admin", "petugas"))

@@ -1,9 +1,12 @@
 package handler
 
 import (
+	"context"
+	"encoding/json"
 	"errors"
 	"math"
 	"net/http"
+	"strconv"
 	"strings"
 
 	"github.com/gin-gonic/gin"
@@ -39,53 +42,88 @@ type kriteriaResponse struct {
 }
 
 type kriteriaUpdateRequest struct {
-	Versi      string  `json:"versi"`
-	Keterangan *string `json:"keterangan"`
-	IsActive   *bool   `json:"is_active"`
-	BobotC1    float64 `json:"bobot_c1"`
-	BobotC2    float64 `json:"bobot_c2"`
-	BobotC3    float64 `json:"bobot_c3"`
-	BobotC4    float64 `json:"bobot_c4"`
-	BobotC5    float64 `json:"bobot_c5"`
-	BobotC6    float64 `json:"bobot_c6"`
-	BobotC7    float64 `json:"bobot_c7"`
-	BobotC8    float64 `json:"bobot_c8"`
-	BobotC9    float64 `json:"bobot_c9"`
-	BobotC10   float64 `json:"bobot_c10"`
-	BobotC11   float64 `json:"bobot_c11"`
-	BobotC12   float64 `json:"bobot_c12"`
-	BobotC13   float64 `json:"bobot_c13"`
+	Versi       string             `json:"versi"`
+	Keterangan  *string            `json:"keterangan"`
+	IsActive    *bool              `json:"is_active"`
+	BobotValues map[string]float64 `json:"-"`
 }
 
-var kriteriaDefinitions = []kriteriaDefinition{
-	{Code: "C1", Name: "Jumlah Anggota Keluarga", Type: "Benefit"},
-	{Code: "C2", Name: "Jumlah Tanggungan", Type: "Benefit"},
-	{Code: "C3", Name: "Pendidikan Kep. Keluarga", Type: "Cost"},
-	{Code: "C4", Name: "Pekerjaan Kep. Keluarga", Type: "Cost"},
-	{Code: "C5", Name: "Status Rumah", Type: "Benefit"},
-	{Code: "C6", Name: "Luas Rumah (m²)", Type: "Cost"},
-	{Code: "C7", Name: "Daya Listrik (VA)", Type: "Cost"},
-	{Code: "C8", Name: "Jumlah Kendaraan", Type: "Cost"},
-	{Code: "C9", Name: "Tabungan (Rupiah)", Type: "Cost"},
-	{Code: "C10", Name: "Penghasilan per Bulan (Rp)", Type: "Cost"},
-	{Code: "C11", Name: "Pengeluaran per Bulan (Rp)", Type: "Benefit"},
-	{Code: "C12", Name: "Kondisi Dinding", Type: "Cost"},
-	{Code: "C13", Name: "Akses Air", Type: "Cost"},
+func (r *kriteriaUpdateRequest) UnmarshalJSON(data []byte) error {
+	type Alias kriteriaUpdateRequest
+	var aux Alias
+	if err := json.Unmarshal(data, &aux); err != nil {
+		return err
+	}
+	*r = kriteriaUpdateRequest(aux)
+
+	var raw map[string]interface{}
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+
+	r.BobotValues = make(map[string]float64)
+	for k, v := range raw {
+		if strings.HasPrefix(k, "bobot_") {
+			code := strings.ToUpper(strings.TrimPrefix(k, "bobot_"))
+			if valFloat, ok := v.(float64); ok {
+				r.BobotValues[code] = valFloat
+			} else if valStr, ok := v.(string); ok {
+				if f, err := strconv.ParseFloat(valStr, 64); err == nil {
+					r.BobotValues[code] = f
+				}
+			}
+		}
+	}
+	return nil
+}
+
+type kriteriaDefinitionRequest struct {
+	Name string `json:"name" binding:"required"`
+	Type string `json:"type" binding:"required"`
+}
+
+func (h *Handler) getActiveKriteriaDefinitions(ctx context.Context) ([]kriteriaDefinition, error) {
+	rows, err := h.db.Query(ctx, `
+		SELECT code, name, type
+		FROM kriteria
+		WHERE is_active = TRUE
+		ORDER BY CAST(SUBSTRING(code FROM '[0-9]+') AS INTEGER) ASC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var list []kriteriaDefinition
+	for rows.Next() {
+		var item kriteriaDefinition
+		if err := rows.Scan(&item.Code, &item.Name, &item.Type); err != nil {
+			return nil, err
+		}
+		list = append(list, item)
+	}
+	return list, nil
 }
 
 func (h *Handler) ListKriteria(c *gin.Context) {
-	data, err := h.kriteria.GetActiveOrLatest(c.Request.Context())
+	defs, err := h.getActiveKriteriaDefinitions(c.Request.Context())
 	if err != nil {
-		if errors.Is(err, repository.ErrKriteriaNotFound) {
-			response := buildKriteriaResponse(nil)
-			c.JSON(http.StatusOK, response)
-			return
-		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load kriteria"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load criteria definitions: " + err.Error()})
 		return
 	}
 
-	response := buildKriteriaResponse(data)
+	data, err := h.kriteria.GetActiveOrLatest(c.Request.Context())
+	if err != nil {
+		if errors.Is(err, repository.ErrKriteriaNotFound) {
+			response := buildKriteriaResponse(nil, defs)
+			c.JSON(http.StatusOK, response)
+			return
+		}
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load kriteria weights"})
+		return
+	}
+
+	response := buildKriteriaResponse(data, defs)
 	c.JSON(http.StatusOK, response)
 }
 
@@ -96,9 +134,10 @@ func (h *Handler) CreateKriteria(c *gin.Context) {
 		return
 	}
 
-	total := req.BobotC1 + req.BobotC2 + req.BobotC3 + req.BobotC4 + req.BobotC5 +
-		req.BobotC6 + req.BobotC7 + req.BobotC8 + req.BobotC9 + req.BobotC10 +
-		req.BobotC11 + req.BobotC12 + req.BobotC13
+	var total float64
+	for _, w := range req.BobotValues {
+		total += w
+	}
 	if math.Abs(total-1) > 0.01 { // payload dikirim dalam desimal (0-1), pastikan total 1 (bukan 100)
 		c.JSON(http.StatusBadRequest, gin.H{"error": "total bobot harus 1 (100%)"})
 		return
@@ -115,32 +154,26 @@ func (h *Handler) CreateKriteria(c *gin.Context) {
 	}
 
 	newItem := model.KriteriaBobot{
-		Versi:      req.Versi,
-		Keterangan: req.Keterangan,
-		BobotC1:    req.BobotC1,
-		BobotC2:    req.BobotC2,
-		BobotC3:    req.BobotC3,
-		BobotC4:    req.BobotC4,
-		BobotC5:    req.BobotC5,
-		BobotC6:    req.BobotC6,
-		BobotC7:    req.BobotC7,
-		BobotC8:    req.BobotC8,
-		BobotC9:    req.BobotC9,
-		BobotC10:   req.BobotC10,
-		BobotC11:   req.BobotC11,
-		BobotC12:   req.BobotC12,
-		BobotC13:   req.BobotC13,
-		IsActive:   isActive,
-		DibuatOleh: &createdBy,
+		Versi:       req.Versi,
+		Keterangan:  req.Keterangan,
+		IsActive:    isActive,
+		DibuatOleh:  &createdBy,
+		BobotValues: req.BobotValues,
 	}
 
 	saved, err := h.kriteria.Create(c.Request.Context(), newItem)
 	if err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create kriteria"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to create kriteria: " + err.Error()})
 		return
 	}
 
-	response := buildKriteriaResponse(saved)
+	defs, err := h.getActiveKriteriaDefinitions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load criteria definitions: " + err.Error()})
+		return
+	}
+
+	response := buildKriteriaResponse(saved, defs)
 	c.JSON(http.StatusCreated, response)
 }
 
@@ -167,9 +200,10 @@ func (h *Handler) UpdateKriteria(c *gin.Context) {
 		return
 	}
 
-	total := req.BobotC1 + req.BobotC2 + req.BobotC3 + req.BobotC4 + req.BobotC5 +
-		req.BobotC6 + req.BobotC7 + req.BobotC8 + req.BobotC9 + req.BobotC10 +
-		req.BobotC11 + req.BobotC12 + req.BobotC13
+	var total float64
+	for _, w := range req.BobotValues {
+		total += w
+	}
 	if math.Abs(total-1) > 0.01 {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "total bobot harus 1 (100%)"})
 		return
@@ -186,19 +220,7 @@ func (h *Handler) UpdateKriteria(c *gin.Context) {
 		updated.IsActive = *req.IsActive
 	}
 
-	updated.BobotC1 = req.BobotC1
-	updated.BobotC2 = req.BobotC2
-	updated.BobotC3 = req.BobotC3
-	updated.BobotC4 = req.BobotC4
-	updated.BobotC5 = req.BobotC5
-	updated.BobotC6 = req.BobotC6
-	updated.BobotC7 = req.BobotC7
-	updated.BobotC8 = req.BobotC8
-	updated.BobotC9 = req.BobotC9
-	updated.BobotC10 = req.BobotC10
-	updated.BobotC11 = req.BobotC11
-	updated.BobotC12 = req.BobotC12
-	updated.BobotC13 = req.BobotC13
+	updated.BobotValues = req.BobotValues
 
 	saved, err := h.kriteria.Update(c.Request.Context(), id, updated, updated.IsActive)
 	if err != nil {
@@ -206,34 +228,26 @@ func (h *Handler) UpdateKriteria(c *gin.Context) {
 			c.JSON(http.StatusNotFound, gin.H{"error": "kriteria not found"})
 			return
 		}
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update kriteria"})
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to update kriteria: " + err.Error()})
 		return
 	}
 
-	response := buildKriteriaResponse(saved)
+	defs, err := h.getActiveKriteriaDefinitions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load criteria definitions: " + err.Error()})
+		return
+	}
+
+	response := buildKriteriaResponse(saved, defs)
 	c.JSON(http.StatusOK, response)
 }
 
-func buildKriteriaResponse(bobot *model.KriteriaBobot) kriteriaResponse {
-	weights := make([]float64, 13)
+func buildKriteriaResponse(bobot *model.KriteriaBobot, defs []kriteriaDefinition) kriteriaResponse {
 	var version *kriteriaVersion
+	bobotValues := make(map[string]float64)
 
 	if bobot != nil {
-		weights = []float64{
-			bobot.BobotC1,
-			bobot.BobotC2,
-			bobot.BobotC3,
-			bobot.BobotC4,
-			bobot.BobotC5,
-			bobot.BobotC6,
-			bobot.BobotC7,
-			bobot.BobotC8,
-			bobot.BobotC9,
-			bobot.BobotC10,
-			bobot.BobotC11,
-			bobot.BobotC12,
-			bobot.BobotC13,
-		}
+		bobotValues = bobot.BobotValues
 		version = &kriteriaVersion{
 			ID:         bobot.ID,
 			Versi:      bobot.Versi,
@@ -243,12 +257,9 @@ func buildKriteriaResponse(bobot *model.KriteriaBobot) kriteriaResponse {
 	}
 
 	total := 0.0
-	items := make([]kriteriaItem, 0, len(kriteriaDefinitions))
-	for index, def := range kriteriaDefinitions {
-		weight := 0.0
-		if index < len(weights) {
-			weight = weights[index]
-		}
+	items := make([]kriteriaItem, 0, len(defs))
+	for _, def := range defs {
+		weight := bobotValues[def.Code]
 		total += weight
 		items = append(items, kriteriaItem{
 			Code:   def.Code,
@@ -310,6 +321,123 @@ func (h *Handler) GetKriteriaByID(c *gin.Context) {
 		return
 	}
 
-	response := buildKriteriaResponse(data)
+	defs, err := h.getActiveKriteriaDefinitions(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "failed to load criteria definitions: " + err.Error()})
+		return
+	}
+
+	response := buildKriteriaResponse(data, defs)
 	c.JSON(http.StatusOK, response)
+}
+
+func (h *Handler) CreateKriteriaDefinition(c *gin.Context) {
+	var req kriteriaDefinitionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	req.Type = strings.Title(strings.ToLower(req.Type))
+	if req.Type != "Benefit" && req.Type != "Cost" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tipe kriteria harus 'Benefit' atau 'Cost'"})
+		return
+	}
+
+	// Dynamic calculation of next code (no limit)
+	var maxNum int
+	rows, err := h.db.Query(c.Request.Context(), "SELECT code FROM kriteria")
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var code string
+			if err := rows.Scan(&code); err == nil {
+				if strings.HasPrefix(code, "C") {
+					if num, err := strconv.Atoi(strings.TrimPrefix(code, "C")); err == nil {
+						if num > maxNum {
+							maxNum = num
+						}
+					}
+				}
+			}
+		}
+	}
+	chosenCode := "C" + strconv.Itoa(maxNum + 1)
+
+	_, err = h.db.Exec(c.Request.Context(), `
+		INSERT INTO kriteria (code, name, type, is_active, updated_at)
+		VALUES ($1, $2, $3, TRUE, NOW())
+		ON CONFLICT (code) DO UPDATE
+		SET name = EXCLUDED.name, type = EXCLUDED.type, is_active = TRUE, updated_at = NOW()
+	`, chosenCode, req.Name, req.Type)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menyimpan kriteria baru: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusCreated, gin.H{"message": "Kriteria baru berhasil ditambahkan", "code": chosenCode})
+}
+
+func (h *Handler) UpdateKriteriaDefinition(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing kriteria ID"})
+		return
+	}
+
+	var req kriteriaDefinitionRequest
+	if err := c.ShouldBindJSON(&req); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+
+	req.Type = strings.Title(strings.ToLower(req.Type))
+	if req.Type != "Benefit" && req.Type != "Cost" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Tipe kriteria harus 'Benefit' atau 'Cost'"})
+		return
+	}
+
+	var code string
+	err := h.db.QueryRow(c.Request.Context(), `
+		UPDATE kriteria
+		SET name = $1, type = $2, updated_at = NOW()
+		WHERE id::text = $3 OR code = $3
+		RETURNING code
+	`, req.Name, req.Type, id).Scan(&code)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal memperbarui kriteria: " + err.Error()})
+		return
+	}
+
+	c.JSON(http.StatusOK, gin.H{"message": "Kriteria berhasil diperbarui", "code": code})
+}
+
+func (h *Handler) DeleteKriteriaDefinition(c *gin.Context) {
+	id := strings.TrimSpace(c.Param("id"))
+	if id == "" {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "Missing kriteria ID"})
+		return
+	}
+
+	var code string
+	err := h.db.QueryRow(c.Request.Context(), `
+		UPDATE kriteria
+		SET is_active = FALSE, updated_at = NOW()
+		WHERE id::text = $1 OR code = $1
+		RETURNING code
+	`, id).Scan(&code)
+
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Gagal menghapus kriteria: " + err.Error()})
+		return
+	}
+
+	// Update bobot_values to set the deleted criteria weight to 0 in all versions
+	_, _ = h.db.Exec(c.Request.Context(), `
+		UPDATE bobot_kriteria
+		SET bobot_values = jsonb_set(bobot_values, ARRAY[$1], '0'::jsonb)
+	`, code)
+
+	c.JSON(http.StatusOK, gin.H{"message": "Kriteria berhasil dihapus", "code": code})
 }

@@ -104,21 +104,48 @@ const getOriginalFilename = (url) => {
   return filename.replace(/^\d+_\d*_?/, "").replace(/^\d+_?/, "");
 };
 
-const buildCriteria = (item) => [
-  { label: "Jumlah Anggota Keluarga", value: `${item.c1_value} orang` },
-  { label: "Jumlah Tanggungan", value: `${item.c2_value} orang` },
-  { label: "Pendidikan Kep. Keluarga", value: `Skor ${item.c3_value}` },
-  { label: "Pekerjaan Kep. Keluarga", value: `Skor ${item.c4_value}` },
-  { label: "Status Rumah", value: `Skor ${item.c5_value}` },
-  { label: "Luas Rumah (m²)", value: `${item.c6_value} m²` },
-  { label: "Daya Listrik", value: `${item.c7_value} VA` },
-  { label: "Jumlah Kendaraan", value: `${item.c8_value} unit` },
-  { label: "Tabungan", value: formatRupiah(item.c9_value) },
-  { label: "Penghasilan per Bulan", value: formatRupiah(item.c10_value) },
-  { label: "Pengeluaran per Bulan", value: formatRupiah(item.c11_value) },
-  { label: "Kondisi Dinding", value: `Skor ${item.c12_value}` },
-  { label: "Akses Air", value: `Skor ${item.c13_value}` }
-];
+const buildCriteria = (item, activeCriteria) => {
+  const configs = {
+    C1: (v) => `${v} orang`,
+    C2: (v) => `${v} orang`,
+    C3: (v) => `Skor ${v}`,
+    C4: (v) => `Skor ${v}`,
+    C5: (v) => `Skor ${v}`,
+    C6: (v) => `${v} m²`,
+    C7: (v) => `${v} VA`,
+    C8: (v) => `${v} unit`,
+    C9: (v) => formatRupiah(v),
+    C10: (v) => formatRupiah(v),
+    C11: (v) => formatRupiah(v),
+    C12: (v) => `Skor ${v}`,
+    C13: (v) => `Skor ${v}`
+  };
+
+  const currentCriteria = activeCriteria || [
+    { code: "C1", name: "Jumlah Anggota Keluarga" },
+    { code: "C2", name: "Jumlah Tanggungan" },
+    { code: "C3", name: "Pendidikan Kep. Keluarga" },
+    { code: "C4", name: "Pekerjaan Kep. Keluarga" },
+    { code: "C5", name: "Status Rumah" },
+    { code: "C6", name: "Luas Rumah" },
+    { code: "C7", name: "Daya Listrik" },
+    { code: "C8", name: "Jumlah Kendaraan" },
+    { code: "C9", name: "Tabungan" },
+    { code: "C10", name: "Penghasilan per Bulan" },
+    { code: "C11", name: "Pengeluaran per Bulan" },
+    { code: "C12", name: "Kondisi Dinding" },
+    { code: "C13", name: "Akses Air" }
+  ];
+
+  return currentCriteria.map(c => {
+    const val = item[`${c.code.toLowerCase()}_value`] ?? 0;
+    const formatFn = configs[c.code] || ((v) => String(v));
+    return {
+      label: c.name,
+      value: formatFn(val)
+    };
+  });
+};
 
 const resolveVerification = (item) => {
   if (item.foto_ktp_url && item.foto_kk_url) return "Terverifikasi";
@@ -188,7 +215,7 @@ const buildFormDataFromWarga = (item) => ({
   c13_value: toFieldValue(item.c13_value)
 });
 
-const buildWargaPayload = (formData) => {
+const buildWargaPayload = (formData, activeCriteria) => {
   const requiredTextFields = ["nama_lengkap", "nik", "no_kk", "tanggal_lahir", "jenis_kelamin", "alamat"];
   for (const field of requiredTextFields) {
     if (!String(formData[field] || "").trim()) {
@@ -227,9 +254,15 @@ const buildWargaPayload = (formData) => {
   ];
 
   for (const field of numericFields) {
-    const value = Number(formData[field]);
-    if (Number.isNaN(value)) {
-      throw new Error(`Nilai ${field.replace("_", " ")} harus diisi dengan angka.`);
+    const code = field.split("_")[0].toUpperCase();
+    const isActive = activeCriteria ? activeCriteria.some(c => c.code === code) : true;
+    let value = 0;
+    if (isActive) {
+      value = Number(formData[field]);
+      if (Number.isNaN(value) || formData[field] === "") {
+        const cName = activeCriteria ? (activeCriteria.find(c => c.code === code)?.name || "") : "";
+        throw new Error(`Nilai ${code} (${cName || field.replace("_", " ")}) harus diisi dengan angka.`);
+      }
     }
     payload[field] = value;
   }
@@ -237,7 +270,7 @@ const buildWargaPayload = (formData) => {
   return payload;
 };
 
-const mapWargaResponse = (item) => {
+const mapWargaResponse = (item, activeCriteria) => {
   const rt = item.rt ?? "";
   const rw = item.rw ?? "";
   const rtRw = rt && rw ? `${rt}/${rw}` : rt || rw || "-";
@@ -283,14 +316,31 @@ const mapWargaResponse = (item) => {
     verification,
     updated: formatDate(item.updated_at),
     documents,
-    criteria: buildCriteria(item),
+    criteria: buildCriteria(item, activeCriteria),
     source: item
   };
 };
 
+const defaultCriteria = [
+  { code: "C1", name: "Jumlah Anggota Keluarga", type: "Benefit" },
+  { code: "C2", name: "Jumlah Tanggungan", type: "Benefit" },
+  { code: "C3", name: "Pendidikan Kep. Keluarga", type: "Cost" },
+  { code: "C4", name: "Pekerjaan Kep. Keluarga", type: "Cost" },
+  { code: "C5", name: "Status Rumah", type: "Benefit" },
+  { code: "C6", name: "Luas Rumah", type: "Cost" },
+  { code: "C7", name: "Daya Listrik", type: "Cost" },
+  { code: "C8", name: "Jumlah Kendaraan", type: "Cost" },
+  { code: "C9", name: "Tabungan", type: "Cost" },
+  { code: "C10", name: "Penghasilan per Bulan", type: "Cost" },
+  { code: "C11", name: "Pengeluaran per Bulan", type: "Benefit" },
+  { code: "C12", name: "Kondisi Dinding", type: "Cost" },
+  { code: "C13", name: "Akses Air", type: "Cost" }
+];
+
 const DataWargaPage = () => {
-  const { getWarga, createWarga, updateWarga, uploadFile, getWargaHistory } = useApi();
+  const { getKriteria, getWarga, createWarga, updateWarga, uploadFile, getWargaHistory } = useApi();
   const navigate = useNavigate();
+  const [activeCriteria, setActiveCriteria] = useState(defaultCriteria);
   const [query, setQuery] = useState("");
   const [selectedStatus, setSelectedStatus] = useState("Semua");
   const [selectedRtRw, setSelectedRtRw] = useState("Semua");
@@ -301,6 +351,48 @@ const DataWargaPage = () => {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState("");
   const [total, setTotal] = useState(0);
+
+  useEffect(() => {
+    const fetchCriteria = async () => {
+      const res = await getKriteria();
+      if (res.success && res.data.length > 0) {
+        setActiveCriteria(res.data.map(item => ({
+          code: item.code,
+          name: item.name,
+          type: item.type
+        })));
+      }
+    };
+    fetchCriteria();
+  }, [getKriteria]);
+
+  const dynamicCriteriaFieldsConfig = useMemo(() => {
+    const configs = {
+      C1: { type: "number", suffix: "orang" },
+      C2: { type: "number", suffix: "orang" },
+      C3: { type: "select", options: C3_OPTIONS },
+      C4: { type: "select", options: C4_OPTIONS },
+      C5: { type: "select", options: C5_OPTIONS },
+      C6: { type: "number", suffix: "m²" },
+      C7: { type: "select", options: C7_OPTIONS },
+      C8: { type: "number", suffix: "unit" },
+      C9: { type: "number", prefix: "Rp" },
+      C10: { type: "number", prefix: "Rp" },
+      C11: { type: "number", prefix: "Rp" },
+      C12: { type: "select", options: C12_OPTIONS },
+      C13: { type: "select", options: C13_OPTIONS }
+    };
+
+    return activeCriteria.map(item => {
+      const code = item.code;
+      const conf = configs[code] || { type: "number" };
+      return {
+        field: `${code.toLowerCase()}_value`,
+        label: `${code} - ${item.name}`,
+        ...conf
+      };
+    });
+  }, [activeCriteria]);
   const [statsData, setStatsData] = useState({ active_count: 0, pending_count: 0, missing_docs_count: 0 });
 
   const rtRwOptions = useMemo(() => {
@@ -347,7 +439,7 @@ const DataWargaPage = () => {
         return;
       }
 
-      setWarga(result.data.map(mapWargaResponse));
+      setWarga(result.data.map(item => mapWargaResponse(item, activeCriteria)));
       setTotal(result.total || 0);
       setStatsData(result.stats || { active_count: 0, pending_count: 0, missing_docs_count: 0 });
       setIsLoading(false);
@@ -357,7 +449,7 @@ const DataWargaPage = () => {
     return () => {
       isActive = false;
     };
-  }, [getWarga, page, query, selectedRtRw]);
+  }, [getWarga, page, query, selectedRtRw, activeCriteria]);
 
   const filteredWarga = useMemo(() => {
     return warga.filter((item) => {
@@ -520,7 +612,7 @@ const DataWargaPage = () => {
       setIsLoading(false);
       return;
     }
-    setWarga(result.data.map(mapWargaResponse));
+    setWarga(result.data.map(item => mapWargaResponse(item, activeCriteria)));
     setTotal(result.total || 0);
     setStatsData(result.stats || { active_count: 0, pending_count: 0, missing_docs_count: 0 });
     setIsLoading(false);
@@ -530,7 +622,7 @@ const DataWargaPage = () => {
     setFormError("");
     setFormLoading(true);
     try {
-      const payload = buildWargaPayload(formData);
+      const payload = buildWargaPayload(formData, activeCriteria);
 
       let result;
       if (isEditing && selectedWarga) {
@@ -546,7 +638,7 @@ const DataWargaPage = () => {
       setShowForm(false);
       await refreshWargaList();
       if (isEditing && selectedWarga && result && result.data) {
-        setSelectedWarga(mapWargaResponse(result.data));
+        setSelectedWarga(mapWargaResponse(result.data, activeCriteria));
       }
     } catch (err) {
       setFormError(err.message || "Gagal menyimpan data.");
@@ -1015,7 +1107,7 @@ const DataWargaPage = () => {
           <div className="border-t border-border/60 my-4 pt-4">
             <h4 className="text-sm font-bold text-text-primary mb-3">Kriteria Penilaian SAW</h4>
             <div className="grid gap-4 sm:grid-cols-2">
-              {criteriaFieldsConfig.map((cfg) => {
+              {dynamicCriteriaFieldsConfig.map((cfg) => {
                 if (cfg.type === "select") {
                   return (
                     <div key={cfg.field} className="flex flex-col gap-1">
